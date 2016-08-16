@@ -63,7 +63,7 @@ exports.get = function(options, cb) {
 
 //This class inherits from net.Server and represents a HTTP server.
 const server = require('_http_server');
-//This object is created internally by a HTTP server--not by the user. It is passed as the second parameter to the 'request' event.
+//This object is created internally by a HTTP server, not by the user. It is passed as the second parameter to the 'request' event.
 //The response implements, but does not inherit from, the Writable Stream interface. 
 exports.ServerResponse = server.ServerResponse;
 
