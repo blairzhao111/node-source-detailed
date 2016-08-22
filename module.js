@@ -1,6 +1,6 @@
 // 'module' module
 
-//if you feel like that the source code is TL;DR, then here is the deal:
+// If you feel like that the source code is TL;DR, then here is the deal:
 
 // node.js module system follows CommonJS standard and specification.
 // Which every script is considered as an individual module and exposes public objects/values through an export property of that module's module object. 
@@ -43,13 +43,31 @@
 // 3. If X/index.json is a file, parse X/index.json to a JavaScript object. STOP
 // 4. If X/index.node is a file, load X/index.node as binary addon.  STOP
 
+// More details about loading a given module:
+// In general speaking, every time when a given module is requested through 'require' method, it'll goes through the following steps:
+// 1. Call to the wrapper 'require' function and also pass module's name/path, wrapper function internally invokes module.require method.
+// 2. Then, module.require method checks if name/path is valid string and calls module._load method.
+// 3. _load method gets absolute path of requested module as filename and try to do following three thing:
+//     a) Check if module has been loaded before and cached in Module._cache. If it did, return its exports property.
+//     b) Check if module is a native module. If it is, then load the native module and return.
+//     c) Create a new Module instance and cache it into Module._cache with filename as key. Then call tryModuleLoad function to actually load the module. If successful, return module's exports property. 
+// 4. tryModuleLoad function tries to load module by calling module.load method. If loading is failed, delete filename/module pair from Module._cache object.
+// 5. module.load method adds filename and paths peoperties to the module object and set proper extension to the requested filename. Then, try to invoke Module._extensions[extension] function.
+// 6. By default, Module._extensions[extension] could have three possible function invocations, they are:
+//     a) If the extension is '.js', then try to load the file from file system using synchronous bulk read file method, after loading, try to compile it.
+//     b) If the extension is '.json', then read the file from file system and try to parse the JSON file. If error occurs, throw error.
+//     c) If the extension is '.node', then use system's dlopen function to load the dynamic library file.
+// 7. In module._compile method, requested file is loaded and run along with necessary arguments by using methods from 'vm' module(V8 engine's API). 
+
 'use strict';
 
+//module dependencies 
 const NativeModule = require('native_module');
 const util = require('util');
 const internalModule = require('internal/module');
 const internalUtil = require('internal/util');
 const vm = require('vm');
+
 const assert = require('assert').ok;
 const fs = require('fs');
 const path = require('path');
@@ -69,6 +87,7 @@ function hasOwnProperty(obj, prop) {
 	return Object.prototype.hasOwnProperty.call(obj, prop);
 }
 
+
 function stat(filename) {
 	filename = path._makeLong(filename);
 	const cache = stat.cache;
@@ -83,6 +102,7 @@ function stat(filename) {
 	return result;
 }
 stat.cache = null;
+
 
 // Module Constructor
 // Evert module instance has following properties:
@@ -109,6 +129,7 @@ function Module(id, parent) {
 //entire script exports this Module constructor
 module.exports = Module;
 
+
 //properties of Module constructor function object:
 
 // Object used to cache all loaded modules objects, modules are cached as filename/module object pairs.
@@ -118,18 +139,21 @@ module.exports = Module;
 // If you need to load a brand new module object whenever you require it. You need to explicitly delete the previous cached one before you require the module.
 Module._cache = {};
 
-//object used to cache all paths that store module
+//object used to cache all paths that are the possible location for required module
 Module._pathCache = {};
 
 //object used to store all valid extensions, by default, there are three: '.js'/'.json'/'.node'
 Module._extensions = {};
 
+//paths that indicates the search directories for a given requested module/script
 var modulePaths = [];
 Module.globalPaths = [];
 
-//
+//native wrapper functions
 Module.wrapper = NativeModule.wrapper;
 Module.wrap = NativeModule.wrap;
+
+//debug utility
 Module._debug = util.debuglog('module');
 
 // We use this alias for the preprocessor that filters it out
@@ -296,6 +320,184 @@ Module._findPath = function(request, paths, isMain) {
 	}
 
 	return false;
+};
+
+// 'node_modules' character codes reversed
+var nmChars = [ 115, 101, 108, 117, 100, 111, 109, 95, 101, 100, 111, 110 ];
+var nmLen = nmChars.length;
+if (process.platform === 'win32') {
+  // 'from' is the __dirname of the module.
+  Module._nodeModulePaths = function(from) {
+    // guarantee that 'from' is absolute.
+    from = path.resolve(from);
+
+    // note: this approach *only* works when the path is guaranteed
+    // to be absolute.  Doing a fully-edge-case-correct path.split
+    // that works on both Windows and Posix is non-trivial.
+
+    // return root node_modules when path is 'D:\\'.
+    // path.resolve will make sure from.length >=3 in Windows.
+    if (from.charCodeAt(from.length - 1) === 92/*\*/ &&
+        from.charCodeAt(from.length - 2) === 58/*:*/)
+      return [from + 'node_modules'];
+
+    const paths = [];
+    var p = 0;
+    var last = from.length;
+    for (var i = from.length - 1; i >= 0; --i) {
+      const code = from.charCodeAt(i);
+      // The path segment separator check ('\' and '/') was used to get
+      // node_modules path for every path segment.
+      // Use colon as an extra condition since we can get node_modules
+      // path for dirver root like 'C:\node_modules' and don't need to
+      // parse driver name.
+      if (code === 92/*\*/ || code === 47/*/*/ || code === 58/*:*/) {
+        if (p !== nmLen)
+          paths.push(from.slice(0, last) + '\\node_modules');
+        last = i;
+        p = 0;
+      } else if (p !== -1) {
+        if (nmChars[p] === code) {
+          ++p;
+        } else {
+          p = -1;
+        }
+      }
+    }
+
+    return paths;
+  };
+} else { // posix
+  // 'from' is the __dirname of the module.
+  Module._nodeModulePaths = function(from) {
+    // guarantee that 'from' is absolute.
+    from = path.resolve(from);
+    // Return early not only to avoid unnecessary work, but to *avoid* returning
+    // an array of two items for a root: [ '//node_modules', '/node_modules' ]
+    if (from === '/')
+      return ['/node_modules'];
+
+    // note: this approach *only* works when the path is guaranteed
+    // to be absolute.  Doing a fully-edge-case-correct path.split
+    // that works on both Windows and Posix is non-trivial.
+    const paths = [];
+    var p = 0;
+    var last = from.length;
+    for (var i = from.length - 1; i >= 0; --i) {
+      const code = from.charCodeAt(i);
+      if (code === 47/*/*/) {
+        if (p !== nmLen)
+          paths.push(from.slice(0, last) + '/node_modules');
+        last = i;
+        p = 0;
+      } else if (p !== -1) {
+        if (nmChars[p] === code) {
+          ++p;
+        } else {
+          p = -1;
+        }
+      }
+    }
+
+    // Append /node_modules to handle root paths.
+    paths.push('/node_modules');
+
+    return paths;
+  };
+}
+
+
+// 'index.' character codes
+var indexChars = [ 105, 110, 100, 101, 120, 46 ];
+var indexLen = indexChars.length;
+Module._resolveLookupPaths = function(request, parent) {
+  if (NativeModule.nonInternalExists(request)) {
+    return [request, []];
+  }
+
+  var reqLen = request.length;
+  // Check for relative path
+  if (reqLen < 2 ||
+      request.charCodeAt(0) !== 46/*.*/ ||
+      (request.charCodeAt(1) !== 46/*.*/ &&
+       request.charCodeAt(1) !== 47/*/*/)) {
+    var paths = modulePaths;
+    if (parent) {
+      if (!parent.paths)
+        paths = parent.paths = [];
+      else
+        paths = parent.paths.concat(paths);
+    }
+
+    // Maintain backwards compat with certain broken uses of require('.')
+    // by putting the module's directory in front of the lookup paths.
+    if (request === '.') {
+      if (parent && parent.filename) {
+        paths.unshift(path.dirname(parent.filename));
+      } else {
+        paths.unshift(path.resolve(request));
+      }
+    }
+
+    return [request, paths];
+  }
+
+  // with --eval, parent.id is not set and parent.filename is null
+  if (!parent || !parent.id || !parent.filename) {
+    // make require('./path/to/foo') work - normally the path is taken
+    // from realpath(__filename) but with eval there is no filename
+    var mainPaths = ['.'].concat(Module._nodeModulePaths('.'), modulePaths);
+    return [request, mainPaths];
+  }
+
+  // Is the parent an index module?
+  // We can assume the parent has a valid extension,
+  // as it already has been accepted as a module.
+  const base = path.basename(parent.filename);
+  var parentIdPath;
+  if (base.length > indexLen) {
+    var i = 0;
+    for (; i < indexLen; ++i) {
+      if (indexChars[i] !== base.charCodeAt(i))
+        break;
+    }
+    if (i === indexLen) {
+      // We matched 'index.', let's validate the rest
+      for (; i < base.length; ++i) {
+        const code = base.charCodeAt(i);
+        if (code !== 95/*_*/ &&
+            (code < 48/*0*/ || code > 57/*9*/) &&
+            (code < 65/*A*/ || code > 90/*Z*/) &&
+            (code < 97/*a*/ || code > 122/*z*/))
+          break;
+      }
+      if (i === base.length) {
+        // Is an index module
+        parentIdPath = parent.id;
+      } else {
+        // Not an index module
+        parentIdPath = path.dirname(parent.id);
+      }
+    } else {
+      // Not an index module
+      parentIdPath = path.dirname(parent.id);
+    }
+  } else {
+    // Not an index module
+    parentIdPath = path.dirname(parent.id);
+  }
+  var id = path.resolve(parentIdPath, request);
+
+  // make sure require('./path') and require('path') get distinct ids, even
+  // when called from the toplevel js file
+  if (parentIdPath === '.' && id.indexOf('/') === -1) {
+    id = './' + id;
+  }
+
+  debug('RELATIVE: requested: %s set ID to: %s from %s', request, id,
+        parent.id);
+
+  return [id, [path.dirname(parent.filename)]];
 };
 
 // Check the cache for the requested file.
