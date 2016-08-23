@@ -1,5 +1,17 @@
-//core 'events' module
-//commented by Junwei Zhao<blairzhao111@gmail.com>
+// 'events' module
+// 'event' module provides an extremely important type/class: EventEmitter, bascially all node core moduels are built upon this type.
+// EventEmitter follows the Observer Pattern (publish/Subscribe).
+// Its implementation in node is actually pretty easy because of Javascript first-class function.   
+// Every EventEmitter instance has a 'clean' object(an instance of EventHandlers) that is used to 
+// store (named event/listener) or (named event/listeners array) as key/value pairs.
+// Named Event is just an string that describes and identifies the actual event.
+// Listener is a handler function that gets invoked along with proper argument/arguments when its associated event is emitted.
+// Listener stores in two different forms: 
+//   1. If there is only one listener, then value will be that function in the key/value pair
+//   2. If there are multiple listeners for a named event, then an array of listener will be the value in the key/value pair.
+// Listeners could be added as normal handler functions that get invokde everytime when event emits. 
+// Or they could be wrapped into a one-time invoked functions that get deleted when they are executed at first time.
+// When a certain event is emitted, all current registered listeners get invoked synchronously, so the order of listeners matters.
 
 'use strict';
 
