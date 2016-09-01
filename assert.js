@@ -15,13 +15,13 @@
 //     If 'actual !== expected', then an AssertionError is thrown. 
 //  7. assert.notStrictEqual(actual, expected, message): test inequality between given actual and expected values using '!=='.
 //     If 'actual === expected', then an AssertionError is thrown.
-//  8. assert.deepEqual(actual, expected, message): used to compare compound structs, like object/array/buffer/regex instances.
-//  9. assert.notDeepEqual(actual, expected, message):
-//  10. assert.deepStrictEqual(actual, expected, message):
-//  11. assert.notdeepStrictEqual(actual, expected, message):
-//  12. assert.throws(block, error, message)
-//  13. assert.doesNotThrows(block, error, message)
-//  14. assert.ifError(err): 
+//  8. assert.deepEqual(actual, expected, message): used to compare compound structs using loose equality, like object/array/buffer/regex instances.
+//  9. assert.notDeepEqual(actual, expected, message): 
+//  10. assert.deepStrictEqual(actual, expected, message): used to compare compound structs using strict equality, like object/array/buffer/regex instances.
+//  11. assert.notdeepStrictEqual(actual, expected, message): 
+//  12. assert.throws(block, error, message): test if block function throw some specific error.
+//  13. assert.doesNotThrows(block, error, message): test if block function doesn't throw some specific error.
+//  14. assert.ifError(err): used to test error argument in callbacks.
 
 'use strict';
 
@@ -30,7 +30,7 @@ const util = require('util');
 const Buffer = require('buffer').Buffer;
 const pToString = (obj) => Object.prototype.toString.call(obj);
 
-// 1. The assert module provides functions that throw AssertionErrors when particular conditions are not met. 
+// The assert module provides functions that throw AssertionErrors when particular conditions are not met. 
 // The assert module must conform to the following interface.
 
 // if you do 'const assert = require('assert');', then
@@ -38,7 +38,7 @@ const pToString = (obj) => Object.prototype.toString.call(obj);
 // if given value is falsy, an AssertionError would be thrown.
 const assert = module.exports = ok;
 
-// 2. The AssertionError is defined in assert. The AssertionError type is inherited from built-in Error type.
+// The AssertionError is defined in assert. The AssertionError type is inherited from built-in Error type.
 // An AssertionError instance has following properties:
 // 1. name: which is set to 'AssertError' by default.
 // 2. actual: actaul value passed into assertion
@@ -92,7 +92,7 @@ function getMessage(self) {
 // other keys to the AssertionError's constructor - they will be
 // ignored.
 
-// 3. All of the following functions must throw an AssertionError
+// All of the following functions must throw an AssertionError
 // when a corresponding condition is not met, with a message that
 // may be undefined if not provided.  All assertion methods provide
 // both the actual and expected values to the assertion error for
@@ -114,7 +114,7 @@ function fail(actual, expected, message, operator, stackStartFunction) {
 module.exports.fail = fail;
 
 
-// 4. Pure assertion tests whether a value is truthy, as determined
+// Pure assertion tests whether a value is truthy, as determined
 // by !!guard.
 // assert.ok(guard, message_opt);
 // This statement is equivalent to assert.equal(true, !!guard,
@@ -131,7 +131,7 @@ function ok(value, message) {
 module.exports.ok = ok;
 
 
-// 5. The equality assertion tests shallow, coercive equality with ==.
+// The equality assertion tests shallow, coercive equality with ==.
 // assert.equal(actual, expected, message_opt);
 function equal(actual, expected, message) {
 	if(actual != expected) fail(actual, expected, message, '==', assert.equal); 
@@ -140,7 +140,7 @@ function equal(actual, expected, message) {
 module.exports.equal = equal;
 
 
-// 6. The non-equality assertion tests for whether two objects are not equal
+// The non-equality assertion tests for whether two objects are not equal
 // with != assert.notEqual(actual, expected, message_opt);
 function notEqual(actual, expected, message) {
 	if(actual == expected) fail(actual, expected, message, '!=', assert.notEqual);
@@ -149,13 +149,21 @@ function notEqual(actual, expected, message) {
 module.exports.notEqual = notEqual;
 
 
-// 7. The equivalence assertion tests a deep equality relation.
+// The equivalence assertion tests a deep equality relation.
 // assert.deepEqual(actual, expected, message_opt);
 function deepEqual(actual, expected, message) {
 	if(!_deepEqual(actual, expected, false)) fail(actual, expected, message, 'deepEqual', assert.deepEqual);
 }
 
 module.exports.deepEqual = deepEqual;
+
+// The non-equivalence assertion tests for any deep inequality.
+// assert.notDeepEqual(actual, expected, message_opt);
+function notDeepEqual(actual, expected, message) {
+	if(_deepEqual(actual, expected, false)) fail(actual, expected, message, 'notDeepEqual', assert.notDeepEqual); 
+}
+
+module.exports.notDeepEqual = notDeepEqual;
 
 
 function deepStrictEuqal(actual, expected, message) {
@@ -164,9 +172,17 @@ function deepStrictEuqal(actual, expected, message) {
 
 module.exports.deepStrictEuqal = deepStrictEuqal;
 
+
+function notDeepSrtrictEqual(actual, expected, message) {
+	if(_deepEqual(actual, expectedm false)) fail(actual, expected, message, "notDeepSrtrictEqual", assert.notDeepSrtrictEqual);
+}
+
+module.exports.notDeepSrtrictEqual = notDeepSrtrictEqual;
+
+
 //helper fucntion that actually performs equality tests used by assert.deepEqual and assert.deepStrictEqual
 function _deepEqual(actual, expected, strict, memos) {
-	 // 7.1 All identical values are equivalent, as determined by ===.
+	 // 7.1 All identical values are equivalent, as determined by ===. Works on primitive types and objects.
 	 if(actual === expected){
 	 	return true;
 	 } else if(actual instanceof Buffer && expected instanceof Buffer) {
@@ -229,22 +245,46 @@ function isArguments(object) {
 	return Object.prototype.toString.call(object) == '[object Arguments]';
 }
 
-
+// helper function for testing if two given objects are equal.
 function objEquiv(a, b, strict, actualVisitedObjects) {
+	if(a === null || a === undefined || b === null || b === undefined) return false;
 
+	// if one is a primitive, the other must be same
+	if(util.isPrimitive(a) || util.isPrimitive(b)) return a === b;
+
+	if(strict && Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false;
+
+	const aIsArgs = isArguments(a);
+	const bIsArgs = isArguments(b);
+
+	if((aIsArgs && !bIsArgs) || (!aIsArgs && bIsArgs)) return false;
+
+	const ka = Object.keys(a);
+	const kb = Object.keys(b);
+
+	var key, i;
+	// having the same number of owned properties (keys incorporates
+	// hasOwnProperty)
+	if(ka.length !== kb.length) return false;
+	//the same set of keys (although not necessarily the same order)
+	ka.sort();
+	kb.sort();
+	//~~~cheap key test
+	for(i = ka.length - 1; i >= 0; i--) {
+		if(ka[i] !== kb[b]) return false;
+	}
+	//equivalent values for every corresponding key, and
+	//~~~possibly expensive deep test
+	for(i = ka.length - 1; i >=0; i--) {
+		key = ka[i];
+		if(!_deepEqual(a[key], b[key], strict, actualVisitedObjects)) return false; 
+	}
+
+	return true;
 }
 
 
-// 8. The non-equivalence assertion tests for any deep inequality.
-// assert.notDeepEqual(actual, expected, message_opt);
-function notDeepEqual(actual, expected, message) {
-	if(_deepEqual(actual, expected, false)) fail(actual, expected, message, 'notDeepEqual', assert.notDeepEqual); 
-}
-
-module.exports.notDeepEqual = notDeepEqual;
-
-
-// 9. The strict equality assertion tests strict equality, as determined by ===.
+// The strict equality assertion tests strict equality, as determined by ===.
 // assert.strictEqual(actual, expected, message_opt);
 function strictEqual(actual, expected, message) {
 	if(actual !== expected) {
@@ -255,7 +295,7 @@ function strictEqual(actual, expected, message) {
 module.exports.strictEqual = strictEqual;
 
 
-// 10. The strict non-equality assertion tests for strict inequality, as
+// The strict non-equality assertion tests for strict inequality, as
 // determined by !==.  assert.notStrictEqual(actual, expected, message_opt);
 function notStrictEqual(actual, expected, message) {
 	if(actual === expected) {
@@ -265,7 +305,7 @@ function notStrictEqual(actual, expected, message) {
 
 module.exports.notStrictEqual = notStrictEqual;
 
-
+// helper function used by _throw function, it's used to test if the thrown error from block function matches passed-in error argument.
 function expectedException(actual, expected) {
 	if(!actual || !expected) return false;
 
@@ -295,26 +335,29 @@ function _tryBlock(block) {
 	return error;
 }
 
-// internal helper function used by assert.throw and assert.doesNotThrow
+// internal helper function used by assert.throw and assert.doesNotThrow functions.
 function _throw(shouldThrow, block, expected, message) {
 	var actual;
-
-	// block argument needs to a function
+ 
+	// block argument needs to be a function
 	if(typeof block !== 'function') {
 		throw new TypeError('"block" argument must be a function');
 	}
 
-	// if error(expected) argument is string, it's used as message and got ignored as error, 
+	// error(expected) can only be constructor, RegExp and validataion function.
+	// if error(expected) argument is string, it's used as message and got ignored as being error argument.
 	if(typeof expected === 'string') {
 		message = expected;
 		expected = null;
 	}
 
+	// try to invoke block function and return either error or undefined
 	actual = _tryBlock(block);
 
 	message = (expected && expected.name ? ' (' + expected.name + ').' : '.') +
 	            (message ? ' ' + message : '.');
 
+	// if this's assert.throws and block function invocation returns no error, then an AssertionError is thrown.
 	if(shouldThrow && !actual) {
 		fail(actual, expected, 'Missing expected exception' + message);
 	}
@@ -323,6 +366,7 @@ function _throw(shouldThrow, block, expected, message) {
 	const isUnwantedException = !shouldThrow && util.isError(actual);
 	const isUnexpectedException = !shouldThrow && actual && !expected;
 
+	//handle some unwanted situations
 	if((isUnwantedException && userProvidedMessage && expectedException(actual, expected)) || isUnexpectedException) {
 		fail(actual, expected, 'Got unwanted exception' + message);
 	}
@@ -331,7 +375,7 @@ function _throw(shouldThrow, block, expected, message) {
 } 
 
 
-// 11. Expected given function to throw an error:
+// Expected given function to throw an error:
 // block is supposed to be a function. 
 // assert.throws(block, Error_opt, message_opt);
 module.exports.throws = function(block, error, message) {
@@ -344,7 +388,8 @@ module.exports.doesNotThrow = function(block, error, message) {
 	_throw(false, block, error, message);
 };
 
-// 12. Throws value if value is truthy. This is useful when testing the error argument in callbacks.
+// Throws value if value is truthy. This is useful when testing the error argument in callbacks.
+// If argument to ifError is truthy, assumed that an error object is accepted. Function'll throw the error object.
 module.exports.ifError = function(err) {
 	if(err) throw err;
 };
